@@ -16,7 +16,7 @@ async function getKey(){
   if(KEY) return KEY;
   try{ const d=await idb(); const v=await new Promise(r=>{ const q=d.transaction('k').objectStore('k').get('key'); q.onsuccess=()=>r(q.result||null); q.onerror=()=>r(null); });
     if(!v) return null;
-    KEY=(v instanceof CryptoKey)?v:await crypto.subtle.importKey('raw',v,'AES-GCM',false,['decrypt']);
+    KEY=(typeof CryptoKey!=='undefined' && v instanceof CryptoKey)?v:await crypto.subtle.importKey('raw',v,'AES-GCM',false,['decrypt']);
   }catch(e){ KEY=null; }
   return KEY;
 }
@@ -62,7 +62,7 @@ async function clean(m){ if(cleaned===m.idx) return; cleaned=m.idx;
     const live=new Set(Object.values(m.files).map(f=>BASE+'e/'+f[0])); const d=await caches.open(DATA);
     for(const req of await d.keys()){ if(!live.has(req.url)) await d.delete(req); } }catch(e){} }
 
-function toLogin(){ return Response.redirect(BASE+'?r=1',302); }
+function toLogin(w){ return Response.redirect(BASE+'?r=1'+(w?'&w='+w:''),302); }
 
 async function blobResp(id){
   try{ const d=await new Promise((res,rej)=>{ const r=indexedDB.open('hbdb',1); r.onupgradeneeded=()=>{ const x=r.result; if(!x.objectStoreNames.contains('docs')) x.createObjectStore('docs'); if(!x.objectStoreNames.contains('assets')) x.createObjectStore('assets'); }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
@@ -73,13 +73,13 @@ async function blobResp(id){
 }
 
 async function appFile(rel,isNav){
-  if(!(await getKey())) return isNav?toLogin():new Response('',{status:401});
+  if(!(await getKey())) return isNav?toLogin('k'):new Response('',{status:401});
   const page=(rel===''||rel==='index.html');
-  let m; try{ m=await manifest(page); }catch(e){ return isNav?toLogin():new Response('',{status:503}); }
+  let m; try{ m=await manifest(page); }catch(e){ return isNav?toLogin('m'):new Response('',{status:503}); }
   if(page){
     try{ const b=await dec(await getEnc(m.idx,SHELL));
       return new Response(b,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}}); }
-    catch(e){ return isNav?toLogin():new Response('',{status:503}); }
+    catch(e){ return isNav?toLogin('p'):new Response('',{status:503}); }
   }
   if(rel.startsWith('_blob/')) return blobResp(decodeURIComponent(rel.slice(6)));
   const f=m.files[rel];

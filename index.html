@@ -55,8 +55,11 @@ async function enter(){ await swReady(); if(navigator.serviceWorker.controller) 
   const again=/[?&]r=1/.test(location.search);
   if(!('serviceWorker' in navigator)||!window.crypto||!crypto.subtle){ err('הדפדפן הזה לא מתאים. פתחו ב־Safari או Chrome. · Ouvrez avec Safari ou Chrome.'); $('go').disabled=true; return; }
   try{ await swReady(); }catch(e){}
-  if(!again && await getK()){ location.replace('app/'); return; }
-  if(again && await getK()) err('לא הצלחנו לפתוח. בדקו את הרשת, או הקלידו שוב את הקוד. · Réseau ? Sinon retapez le code.');
+  const why=(location.search.match(/[?&]w=([a-z0-9]+)/)||[])[1]||'';
+  const k=await getK(); const bytes=k&&(k instanceof Uint8Array||k instanceof ArrayBuffer);
+  if(!again && k){ location.replace('app/'); return; }
+  if(again && k && !bytes) err('הקלידו את הקוד עוד פעם אחת. · Tapez le code encore une fois.');
+  else if(again && k) err('לא הצלחנו לפתוח. בדקו את הרשת, או הקלידו שוב את הקוד. · Réseau ? Sinon retapez le code.'+(why?' ['+why+']':''));
   $('code').focus();
 })();
 $('f').onsubmit=async ev=>{
@@ -67,13 +70,12 @@ $('f').onsubmit=async ev=>{
   try{
     const S=await (await fetch('e/salt.json',{cache:'no-cache'})).json();
     const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(code),'PBKDF2',false,['deriveKey']);
-    const mk=ex=>crypto.subtle.deriveKey({name:'PBKDF2',salt:b64(S.s),iterations:S.it,hash:'SHA-256'},base,{name:'AES-GCM',length:256},ex,['decrypt']);
-    let key=await mk(false);
+    const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b64(S.s),iterations:S.it,hash:'SHA-256'},base,{name:'AES-GCM',length:256},true,['decrypt']);
     const m=new Uint8Array(await (await fetch('e/m.bin',{cache:'no-cache'})).arrayBuffer());
     try{ await crypto.subtle.decrypt({name:'AES-GCM',iv:m.slice(0,12)},key,m.slice(12)); }
     catch(e){ err('הקוד לא נכון. · Code faux.'); return; }
-    try{ await putK(key); }
-    catch(e){ const k2=await mk(true); await putK(new Uint8Array(await crypto.subtle.exportKey('raw',k2))); }
+    /* kept as plain bytes: the service worker of Safari cannot read a CryptoKey from IndexedDB */
+    await putK(new Uint8Array(await crypto.subtle.exportKey('raw',key)));
     await enter();
   }catch(e){ err('אין רשת או שגיאה. נסו שוב. · Pas de réseau, réessayez.'); console.warn(e); }
   finally{ $('go').disabled=false; $('go').textContent='כניסה · Entrer'; }
