@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="he" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>25meltser · השם בונה</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="25meltser">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#1f3a5f">
+<style>
+:root{--bg:#f4f1ea;--card:#fff;--ink:#1d232b;--mute:#5d6672;--line:#d9d3c7;--acc:#1f3a5f;--accInk:#fff;--bad:#a32d2d}
+@media (prefers-color-scheme:dark){:root{--bg:#14181d;--card:#1d232b;--ink:#eef1f4;--mute:#a2abb6;--line:#333c47;--acc:#7fa7d8;--accInk:#0e1620;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:17px/1.5 system-ui,-apple-system,"Segoe UI",Arial,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px 16px}
+.c{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:28px 22px;max-width:380px;width:100%;text-align:center}
+img{width:72px;height:72px;border-radius:16px}
+h1{font-size:24px;margin:12px 0 4px}
+p{margin:6px 0;color:var(--mute);font-size:15px}
+input{width:100%;font-size:22px;letter-spacing:2px;text-align:center;padding:12px;border:1px solid var(--line);border-radius:12px;margin:18px 0 12px;background:var(--bg);color:var(--ink);direction:ltr}
+button{width:100%;font-size:19px;padding:13px;border:0;border-radius:12px;background:var(--acc);color:var(--accInk);font-weight:600}
+button:disabled{opacity:.6}
+.err{color:var(--bad);min-height:1.5em;margin-top:10px}
+.fr{direction:ltr;font-size:13px}
+</style></head><body>
+<div class="c" id="box">
+  <img src="icon-192.png" alt="">
+  <h1>השם בונה · מלצר 25</h1>
+  <p>מקלידים את הקוד פעם אחת במכשיר הזה.</p>
+  <p class="fr">Tapez le code une seule fois sur cet appareil.</p>
+  <form id="f" autocomplete="off">
+    <input id="code" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="קוד · code" aria-label="קוד">
+    <button id="go" type="submit">כניסה · Entrer</button>
+  </form>
+  <div class="err" id="err" role="alert"></div>
+</div>
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const err=t=>{ $('err').textContent=t||''; };
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('hb',1); r.onupgradeneeded=()=>r.result.createObjectStore('k'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function getK(){ try{ const d=await idb(); return await new Promise(r=>{ const q=d.transaction('k').objectStore('k').get('key'); q.onsuccess=()=>r(q.result||null); q.onerror=()=>r(null); }); }catch(e){ return null; } }
+async function putK(v){ const d=await idb(); return new Promise((res,rej)=>{ const t=d.transaction('k','readwrite'); t.objectStore('k').put(v,'key'); t.oncomplete=res; t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error); }); }
+const b64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function swReady(){
+  if(!('serviceWorker' in navigator)) throw new Error('nosw');
+  await navigator.serviceWorker.register('sw.js',{scope:'./'});
+  await navigator.serviceWorker.ready;
+  if(!navigator.serviceWorker.controller) await new Promise(r=>{ navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}); setTimeout(r,3000); });
+}
+async function enter(){ await swReady(); if(navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('key-changed'); location.replace('app/'); }
+(async()=>{
+  const again=/[?&]r=1/.test(location.search);
+  if(!('serviceWorker' in navigator)||!window.crypto||!crypto.subtle){ err('הדפדפן הזה לא מתאים. פתחו ב־Safari או Chrome. · Ouvrez avec Safari ou Chrome.'); $('go').disabled=true; return; }
+  try{ await swReady(); }catch(e){}
+  if(!again && await getK()){ location.replace('app/'); return; }
+  if(again && await getK()) err('לא הצלחנו לפתוח. בדקו את הרשת, או הקלידו שוב את הקוד. · Réseau ? Sinon retapez le code.');
+  $('code').focus();
+})();
+$('f').onsubmit=async ev=>{
+  ev.preventDefault(); err('');
+  const code=$('code').value.trim().toLowerCase().replace(/[\s\-–—_.]+/g,'');
+  if(!code){ err('הקלידו את הקוד. · Tapez le code.'); return; }
+  $('go').disabled=true; $('go').textContent='בודק… · Vérification…';
+  try{
+    const S=await (await fetch('e/salt.json',{cache:'no-cache'})).json();
+    const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(code),'PBKDF2',false,['deriveKey']);
+    const mk=ex=>crypto.subtle.deriveKey({name:'PBKDF2',salt:b64(S.s),iterations:S.it,hash:'SHA-256'},base,{name:'AES-GCM',length:256},ex,['decrypt']);
+    let key=await mk(false);
+    const m=new Uint8Array(await (await fetch('e/m.bin',{cache:'no-cache'})).arrayBuffer());
+    try{ await crypto.subtle.decrypt({name:'AES-GCM',iv:m.slice(0,12)},key,m.slice(12)); }
+    catch(e){ err('הקוד לא נכון. · Code faux.'); return; }
+    try{ await putK(key); }
+    catch(e){ const k2=await mk(true); await putK(new Uint8Array(await crypto.subtle.exportKey('raw',k2))); }
+    await enter();
+  }catch(e){ err('אין רשת או שגיאה. נסו שוב. · Pas de réseau, réessayez.'); console.warn(e); }
+  finally{ $('go').disabled=false; $('go').textContent='כניסה · Entrer'; }
+};
+})();
+</script>
+</body></html>
