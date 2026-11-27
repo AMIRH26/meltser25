@@ -5,11 +5,11 @@ const SHELL='hb-shell-1', LIBS='hb-libs-1', DATA='hb-data-1';
 const BASE=new URL('./',self.location).href;            // .../<site>/
 const APP=BASE+'app/';
 const APPPATH=new URL(APP).pathname;
-let KEY=null, MAN=null, MANAT=0, REFRESH=null;
+let KEY=null, MAN=null, MANAT=0, REFRESH=null, CUT=false, CUTW='x';
 
 self.addEventListener('install',e=>{ e.waitUntil(caches.open(SHELL).then(c=>c.addAll(['./','sw.js','manifest.webmanifest','icon-192.png','icon-512.png','apple-touch-icon.png']).catch(()=>{}))); self.skipWaiting(); });
 self.addEventListener('activate',e=>{ e.waitUntil(self.clients.claim()); });
-self.addEventListener('message',e=>{ if(e.data==='key-changed'){ KEY=null; MAN=null; } });
+self.addEventListener('message',e=>{ if(e.data==='key-changed'){ KEY=null; MAN=null; CUT=false; } });
 
 function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('hb',1); r.onupgradeneeded=()=>r.result.createObjectStore('k'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
 async function getKey(){
@@ -20,6 +20,19 @@ async function getKey(){
   }catch(e){ KEY=null; }
   return KEY;
 }
+/* cut off: this device forgets the key (its own reports and photos stay on it) */
+async function getMe(){ try{ const d=await idb(); return await new Promise(r=>{ const q=d.transaction('k').objectStore('k').get('me'); q.onsuccess=()=>r(q.result||null); q.onerror=()=>r(null); }); }catch(e){ return null; } }
+async function forget(w){ KEY=null; MAN=null; CUT=true; CUTW=w||'x';
+  try{ const d=await idb(); await new Promise(r=>{ const t=d.transaction('k','readwrite'); t.objectStore('k').delete('key'); t.objectStore('k').delete('me'); t.oncomplete=r; t.onerror=r; t.onabort=r; }); }catch(e){}
+  try{ await caches.delete(DATA); const c=await caches.open(SHELL); for(const q of await c.keys()) if(q.url.startsWith(BASE+'e/')) await c.delete(q); }catch(e){} }
+/* with network, at each opening: is this person still allowed? */
+async function checkAccess(){
+  try{ const me=await getMe(); if(!me||!me.i) return;
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),4000);
+    const r=await fetch(BASE+'e/k.json',{cache:'no-cache',signal:ctl.signal}); clearTimeout(t);
+    if(!r.ok) return; const K=await r.json();
+    if(K&&Array.isArray(K.ok)&&K.ok.length&&!K.ok.includes(me.i)) await forget('x');
+  }catch(e){} }
 async function dec(buf){ const k=await getKey(); if(!k) throw new Error('nokey'); const u=new Uint8Array(buf); return crypto.subtle.decrypt({name:'AES-GCM',iv:u.subarray(0,12)},k,u.subarray(12)); }
 
 /* encrypted file: kept copy first (names change with the content, so a kept copy is never stale), else the network */
@@ -38,7 +51,7 @@ function refresh(ms){
   if(REFRESH) return REFRESH;
   REFRESH=(async()=>{ try{ const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),ms||8000);
       const r=await fetch(MURL,{cache:'no-cache',signal:ctl.signal}); clearTimeout(t);
-      if(r.ok){ const buf=await r.clone().arrayBuffer(); await useMan(buf); const c=await caches.open(SHELL); await c.put(MURL,r); return true; }
+      if(r.ok){ const buf=await r.clone().arrayBuffer(); try{ await useMan(buf); }catch(e){ if(String(e&&e.message)!=='nokey' && await getKey()) await forget('n'); return false; } const c=await caches.open(SHELL); await c.put(MURL,r); return true; }
     }catch(e){} return false; })();
   REFRESH.then(()=>{ REFRESH=null; },()=>{ REFRESH=null; });
   return REFRESH;
@@ -73,9 +86,11 @@ async function blobResp(id){
 }
 
 async function appFile(rel,isNav){
-  if(!(await getKey())) return isNav?toLogin('k'):new Response('',{status:401});
   const page=(rel===''||rel==='index.html');
-  let m; try{ m=await manifest(page); }catch(e){ return isNav?toLogin('m'):new Response('',{status:503}); }
+  if(page&&isNav){ CUT=false; await checkAccess(); }
+  if(CUT||!(await getKey())) return isNav?toLogin(CUT?CUTW:'k'):new Response('',{status:401});
+  let m; try{ m=await manifest(page); }catch(e){ return isNav?toLogin(CUT?CUTW:'m'):new Response('',{status:503}); }
+  if(CUT) return isNav?toLogin(CUTW):new Response('',{status:401});
   if(page){
     try{ const b=await dec(await getEnc(m.idx,SHELL));
       return new Response(b,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}}); }

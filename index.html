@@ -42,7 +42,7 @@ const $=id=>document.getElementById(id);
 const err=t=>{ $('err').textContent=t||''; };
 function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('hb',1); r.onupgradeneeded=()=>r.result.createObjectStore('k'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
 async function getK(){ try{ const d=await idb(); return await new Promise(r=>{ const q=d.transaction('k').objectStore('k').get('key'); q.onsuccess=()=>r(q.result||null); q.onerror=()=>r(null); }); }catch(e){ return null; } }
-async function putK(v){ const d=await idb(); return new Promise((res,rej)=>{ const t=d.transaction('k','readwrite'); t.objectStore('k').put(v,'key'); t.oncomplete=res; t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error); }); }
+async function putK(v,n){ const d=await idb(); return new Promise((res,rej)=>{ const t=d.transaction('k','readwrite'); if(v==null) t.objectStore('k').delete(n||'key'); else t.objectStore('k').put(v,n||'key'); t.oncomplete=res; t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error); }); }
 const b64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 async function swReady(){
   if(!('serviceWorker' in navigator)) throw new Error('nosw');
@@ -58,7 +58,9 @@ async function enter(){ await swReady(); if(navigator.serviceWorker.controller) 
   const why=(location.search.match(/[?&]w=([a-z0-9]+)/)||[])[1]||'';
   const k=await getK(); const bytes=k&&(k instanceof Uint8Array||k instanceof ArrayBuffer);
   if(!again && k){ location.replace('app/'); return; }
-  if(again && k && !bytes) err('הקלידו את הקוד עוד פעם אחת. · Tapez le code encore une fois.');
+  if(why==='n') err('יש גרסה חדשה של הגישה: הקלידו את הקוד שלכם עוד פעם אחת. · Tapez votre code encore une fois.');
+  else if(why==='x') err('הגישה במכשיר הזה הופסקה. לקוד חדש פנו למנהל הפרויקט. · Accès arrêté sur cet appareil.');
+  else if(again && k && !bytes) err('הקלידו את הקוד עוד פעם אחת. · Tapez le code encore une fois.');
   else if(again && k) err('לא הצלחנו לפתוח. בדקו את הרשת, או הקלידו שוב את הקוד. · Réseau ? Sinon retapez le code.'+(why?' ['+why+']':''));
   $('code').focus();
 })();
@@ -69,13 +71,27 @@ $('f').onsubmit=async ev=>{
   $('go').disabled=true; $('go').textContent='בודק… · Vérification…';
   try{
     const S=await (await fetch('e/salt.json',{cache:'no-cache'})).json();
-    const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(code),'PBKDF2',false,['deriveKey']);
-    const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b64(S.s),iterations:S.it,hash:'SHA-256'},base,{name:'AES-GCM',length:256},true,['decrypt']);
+    const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(code),'PBKDF2',false,['deriveBits']);
+    const kb=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',salt:b64(S.s),iterations:S.it,hash:'SHA-256'},base,256));
+    let fileKey=null, me=null;
+    /* personal code: its entry in e/k.json holds the file key, the name and the role */
+    let K=null; try{ K=await (await fetch('e/k.json',{cache:'no-cache'})).json(); }catch(e){}
+    if(K&&K.u){
+      const tag=new Uint8Array([105,100,0]); const h=new Uint8Array(await crypto.subtle.digest('SHA-256',new Uint8Array([...tag,...kb])));
+      const lid=[...h].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,24);
+      const w=K.u[lid];
+      if(w){ const wb=b64(w); const kk=await crypto.subtle.importKey('raw',kb,'AES-GCM',false,['decrypt']);
+        const body=JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:wb.slice(0,12)},kk,wb.slice(12))));
+        fileKey=b64(body.k); me={n:body.n,r:body.r,i:body.i}; }
+    }
+    if(!fileKey) fileKey=kb; /* the first code of the site (before personal codes) */
+    const key=await crypto.subtle.importKey('raw',fileKey,'AES-GCM',true,['decrypt']);
     const m=new Uint8Array(await (await fetch('e/m.bin',{cache:'no-cache'})).arrayBuffer());
     try{ await crypto.subtle.decrypt({name:'AES-GCM',iv:m.slice(0,12)},key,m.slice(12)); }
     catch(e){ err('הקוד לא נכון. · Code faux.'); return; }
     /* kept as plain bytes: the service worker of Safari cannot read a CryptoKey from IndexedDB */
-    await putK(new Uint8Array(await crypto.subtle.exportKey('raw',key)));
+    await putK(new Uint8Array(fileKey));
+    await putK(me,'me');
     await enter();
   }catch(e){ err('אין רשת או שגיאה. נסו שוב. · Pas de réseau, réessayez.'); console.warn(e); }
   finally{ $('go').disabled=false; $('go').textContent='כניסה · Entrer'; }
